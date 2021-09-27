@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cache.h>
 #include <device.h>
 #include <init.h>
 #include <kernel.h>
@@ -644,14 +645,14 @@ static const struct arm_mmu_flat_range mmu_zephyr_ranges[] = {
 
 	/* Mark text segment cacheable,read only and executable */
 	{ .name  = "zephyr_code",
-	  .start = _image_text_start,
-	  .end   = _image_text_end,
+	  .start = __text_region_start,
+	  .end   = __text_region_end,
 	  .attrs = MT_NORMAL | MT_P_RX_U_RX | MT_DEFAULT_SECURE_STATE },
 
 	/* Mark rodata segment cacheable, read only and execute-never */
 	{ .name  = "zephyr_rodata",
-	  .start = _image_rodata_start,
-	  .end   = _image_rodata_end,
+	  .start = __rodata_region_start,
+	  .end   = __rodata_region_end,
 	  .attrs = MT_NORMAL | MT_P_RO_U_RO | MT_DEFAULT_SECURE_STATE },
 };
 
@@ -762,6 +763,9 @@ static void enable_mmu_el1(struct arm_mmu_ptables *ptables, unsigned int flags)
 	/* Ensure these changes are seen before MMU is enabled */
 	isb();
 
+	/* Invalidate all data caches before enable them */
+	sys_cache_data_all(K_CACHE_INVD);
+
 	/* Enable the MMU and data cache */
 	val = read_sctlr_el1();
 	write_sctlr_el1(val | SCTLR_M_BIT | SCTLR_C_BIT);
@@ -785,7 +789,7 @@ static sys_slist_t domain_list;
  * This function provides the default configuration mechanism for the Memory
  * Management Unit (MMU).
  */
-void z_arm64_mmu_init(void)
+void z_arm64_mm_init(bool is_primary_core)
 {
 	unsigned int flags = 0U;
 
@@ -801,7 +805,7 @@ void z_arm64_mmu_init(void)
 	/*
 	 * Only booting core setup up the page tables.
 	 */
-	if (IS_PRIMARY_CORE()) {
+	if (is_primary_core) {
 		kernel_ptables.base_xlat_table = new_table();
 		setup_page_tables(&kernel_ptables);
 	}
@@ -902,6 +906,27 @@ void arch_mem_unmap(void *addr, size_t size)
 		sync_domains((uintptr_t)addr, size);
 		invalidate_tlb_all();
 	}
+}
+
+int arch_page_phys_get(void *virt, uintptr_t *phys)
+{
+	uint64_t par;
+	int key;
+
+	key = arch_irq_lock();
+	__asm__ volatile ("at S1E1R, %0" : : "r" (virt));
+	isb();
+	par = read_sysreg(PAR_EL1);
+	arch_irq_unlock(key);
+
+	if (par & BIT(0)) {
+		return -EFAULT;
+	}
+
+	if (phys) {
+		*phys = par & GENMASK(47, 12);
+	}
+	return 0;
 }
 
 #ifdef CONFIG_USERSPACE

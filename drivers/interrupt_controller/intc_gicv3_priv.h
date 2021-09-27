@@ -16,8 +16,6 @@
 
 #define GIC_RDIST_BASE	DT_REG_ADDR_BY_IDX(DT_INST(0, arm_gic), 1)
 
-#define GIC_GET_RDIST(cpuid)		gic_rdists[cpuid]
-
 /* SGI base is at 64K offset from Redistributor */
 #define GICR_SGI_BASE_OFF		0x10000
 
@@ -48,5 +46,9 @@
 /* GICR_WAKER */
 #define GICR_WAKER_PS			1
 #define GICR_WAKER_CA			2
+
+/* GITCD_IROUTER */
+#define GIC_DIST_IROUTER		0x6000
+#define IROUTER(base, n)		(base + GIC_DIST_IROUTER + (n) * 8)
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_INTC_GICV3_PRIV_H_ */

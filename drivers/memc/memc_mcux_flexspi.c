@@ -16,6 +16,7 @@ LOG_MODULE_REGISTER(memc_flexspi, CONFIG_MEMC_LOG_LEVEL);
 struct memc_flexspi_config {
 	FLEXSPI_Type *base;
 	uint8_t *ahb_base;
+	bool xip;
 	bool ahb_bufferable;
 	bool ahb_cacheable;
 	bool ahb_prefetch;
@@ -28,6 +29,13 @@ struct memc_flexspi_config {
 struct memc_flexspi_data {
 	size_t size[kFLEXSPI_PortCount];
 };
+
+bool memc_flexspi_is_running_xip(const struct device *dev)
+{
+	const struct memc_flexspi_config *config = dev->config;
+
+	return config->xip;
+}
 
 int memc_flexspi_update_lut(const struct device *dev, uint32_t index,
 		const uint32_t *cmd, uint32_t count)
@@ -107,13 +115,22 @@ static int memc_flexspi_init(const struct device *dev)
 	const struct memc_flexspi_config *config = dev->config;
 	flexspi_config_t flexspi_config;
 
+	/* we should not configure the device we are running on */
+	if (memc_flexspi_is_running_xip(dev)) {
+		LOG_DBG("XIP active on %s, skipping init", dev->name);
+		return 0;
+	}
+
 	FLEXSPI_GetDefaultConfig(&flexspi_config);
 
 	flexspi_config.ahbConfig.enableAHBBufferable = config->ahb_bufferable;
 	flexspi_config.ahbConfig.enableAHBCachable = config->ahb_cacheable;
 	flexspi_config.ahbConfig.enableAHBPrefetch = config->ahb_prefetch;
 	flexspi_config.ahbConfig.enableReadAddressOpt = config->ahb_read_addr_opt;
+#if !(defined(FSL_FEATURE_FLEXSPI_HAS_NO_MCR0_COMBINATIONEN) && \
+	FSL_FEATURE_FLEXSPI_HAS_NO_MCR0_COMBINATIONEN)
 	flexspi_config.enableCombination = config->combination_mode;
+#endif
 	flexspi_config.enableSckBDiffOpt = config->sck_differential_clock;
 	flexspi_config.rxSampleClock = config->rx_sample_clock;
 
@@ -122,10 +139,21 @@ static int memc_flexspi_init(const struct device *dev)
 	return 0;
 }
 
+#if defined(CONFIG_XIP) && defined(CONFIG_CODE_FLEXSPI)
+#define MEMC_FLEXSPI_CFG_XIP(node_id) DT_SAME_NODE(node_id, DT_NODELABEL(flexspi))
+#elif defined(CONFIG_XIP) && defined(CONFIG_CODE_FLEXSPI2)
+#define MEMC_FLEXSPI_CFG_XIP(node_id) DT_SAME_NODE(node_id, DT_NODELABEL(flexspi2))
+#elif defined(CONFIG_SOC_SERIES_IMX_RT6XX)
+#define MEMC_FLEXSPI_CFG_XIP(node_id) IS_ENABLED(CONFIG_XIP)
+#else
+#define MEMC_FLEXSPI_CFG_XIP(node_id) false
+#endif
+
 #define MEMC_FLEXSPI(n)							\
 	static const struct memc_flexspi_config				\
 		memc_flexspi_config_##n = {				\
 		.base = (FLEXSPI_Type *) DT_INST_REG_ADDR(n),		\
+		.xip = MEMC_FLEXSPI_CFG_XIP(DT_DRV_INST(n)),		\
 		.ahb_base = (uint8_t *) DT_INST_REG_ADDR_BY_IDX(n, 1),	\
 		.ahb_bufferable = DT_INST_PROP(n, ahb_bufferable),	\
 		.ahb_cacheable = DT_INST_PROP(n, ahb_cacheable),	\
@@ -140,7 +168,7 @@ static int memc_flexspi_init(const struct device *dev)
 									\
 	DEVICE_DT_INST_DEFINE(n,					\
 			      memc_flexspi_init,			\
-			      device_pm_control_nop,			\
+			      NULL,					\
 			      &memc_flexspi_data_##n,			\
 			      &memc_flexspi_config_##n,			\
 			      POST_KERNEL,				\

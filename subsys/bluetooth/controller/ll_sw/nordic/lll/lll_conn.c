@@ -17,6 +17,7 @@
 #include "hal/ccm.h"
 #include "hal/radio.h"
 
+#include "util/util.h"
 #include "util/mem.h"
 #include "util/memq.h"
 #include "util/mfifo.h"
@@ -25,6 +26,7 @@
 
 #include "lll.h"
 #include "lll_clock.h"
+#include "lll_df_types.h"
 #include "lll_conn.h"
 
 #include "lll_internal.h"
@@ -78,7 +80,7 @@ static uint8_t force_md_cnt;
 #define FORCE_MD_CNT_SET() \
 		do { \
 			if (force_md_cnt || \
-			    (trx_cnt >= ((CONFIG_BT_CTLR_TX_BUFFERS) - 1))) { \
+			    (trx_cnt >= ((CONFIG_BT_BUF_ACL_TX_COUNT) - 1))) { \
 				force_md_cnt = BT_CTLR_FORCE_MD_COUNT; \
 			} \
 		} while (0)
@@ -136,6 +138,7 @@ void lll_conn_prepare_reset(void)
 
 void lll_conn_abort_cb(struct lll_prepare_param *prepare_param, void *param)
 {
+	struct lll_conn *lll;
 	int err;
 
 	/* NOTE: This is not a prepare being cancelled */
@@ -154,6 +157,10 @@ void lll_conn_abort_cb(struct lll_prepare_param *prepare_param, void *param)
 	 */
 	err = lll_hfclock_off();
 	LL_ASSERT(err >= 0);
+
+	/* Accumulate the latency as event is aborted while being in pipeline */
+	lll = prepare_param->param;
+	lll->latency_prepare += (prepare_param->lazy + 1);
 
 	lll_done(param);
 }
@@ -249,7 +256,7 @@ void lll_conn_isr_rx(void *param)
 
 		if (0) {
 #if defined(CONFIG_BT_CENTRAL)
-		/* Event done for master */
+		/* Event done for central */
 		} else if (!lll->role) {
 			radio_disable();
 
@@ -264,7 +271,7 @@ void lll_conn_isr_rx(void *param)
 			goto lll_conn_isr_rx_exit;
 #endif /* CONFIG_BT_CENTRAL */
 #if defined(CONFIG_BT_PERIPHERAL)
-		/* Event done for slave */
+		/* Event done for peripheral */
 		} else {
 			radio_switch_complete_and_disable();
 #endif /* CONFIG_BT_PERIPHERAL */
@@ -653,12 +660,12 @@ static void isr_done(void *param)
 			e->drift.start_to_address_actual_us =
 				radio_tmr_aa_restore() - radio_tmr_ready_get();
 			e->drift.window_widening_event_us =
-				lll->slave.window_widening_event_us;
+				lll->periph.window_widening_event_us;
 			e->drift.preamble_to_addr_us = preamble_to_addr_us;
 
 			/* Reset window widening, as anchor point sync-ed */
-			lll->slave.window_widening_event_us = 0;
-			lll->slave.window_size_event_us = 0;
+			lll->periph.window_widening_event_us = 0;
+			lll->periph.window_size_event_us = 0;
 		}
 	}
 #endif /* CONFIG_BT_PERIPHERAL */
@@ -704,10 +711,10 @@ static inline int isr_rx_pdu(struct lll_conn *lll, struct pdu_data *pdu_data_rx,
 
 #if defined(CONFIG_BT_PERIPHERAL)
 		/* First ack (and redundantly any other ack) enable use of
-		 * slave latency.
+		 * peripheral latency.
 		 */
 		if (lll->role) {
-			lll->slave.latency_enabled = 1;
+			lll->periph.latency_enabled = 1;
 		}
 #endif /* CONFIG_BT_PERIPHERAL */
 

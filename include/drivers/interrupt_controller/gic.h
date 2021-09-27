@@ -228,6 +228,11 @@
 
 #define GIC_SPI_INT_BASE		32
 
+#define GIC_SPI_MAX_INTID		1019
+
+#define GIC_IS_SPI(intid)		(((intid) >= GIC_SPI_INT_BASE) && \
+					((intid) <= GIC_SPI_MAX_INTID))
+
 #define GIC_NUM_INTR_PER_REG		32
 
 #define GIC_NUM_CFG_PER_REG		16
@@ -254,12 +259,6 @@
 
 /* Fixme: update from platform specific define or dt */
 #define GIC_NUM_CPU_IF			CONFIG_MP_NUM_CPUS
-/* Fixme: arch support need to provide api/macro in SMP implementation */
-#if defined(CONFIG_ARM64) && (CONFIG_MP_NUM_CPUS > 1)
-#define GET_CPUID()			MPIDR_TO_CORE(GET_MPIDR())
-#else
-#define GET_CPUID()			0
-#endif
 
 #ifndef _ASMLANGUAGE
 

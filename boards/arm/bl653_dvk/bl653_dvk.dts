@@ -104,8 +104,8 @@
 &i2c0 {
 	compatible = "nordic,nrf-twi";
 	status = "okay";
-	sda-gpios = <&gpio0 26 0>;
-	scl-gpios = <&gpio0 27 0>;
+	sda-pin = <26>;
+	scl-pin = <27>;
 };
 
 &pwm0 {
@@ -155,7 +155,7 @@
 	};
 };
 
-&usbd {
+zephyr_udc0: &usbd {
 	compatible = "nordic,nrf-usbd";
 	status = "okay";
 };

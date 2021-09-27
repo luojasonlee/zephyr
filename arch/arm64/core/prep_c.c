@@ -17,13 +17,11 @@
 #include <kernel_internal.h>
 #include <linker/linker-defs.h>
 
+__weak void z_arm64_mm_init(bool is_primary_core) { }
+
 extern FUNC_NORETURN void z_cstart(void);
 
-#ifdef CONFIG_ARM_MMU
-extern void z_arm64_mmu_init(void);
-#else
-static inline void z_arm64_mmu_init(void) { }
-#endif
+extern void z_arm64_mm_init(bool is_primary_core);
 
 static inline void z_arm64_bss_zero(void)
 {
@@ -45,11 +43,14 @@ static inline void z_arm64_bss_zero(void)
  */
 void z_arm64_prep_c(void)
 {
+	/* Initialize tpidrro_el0 with our struct _cpu instance address */
+	write_tpidrro_el0((uintptr_t)&_kernel.cpus[0]);
+
 	z_arm64_bss_zero();
 #ifdef CONFIG_XIP
 	z_data_copy();
 #endif
-	z_arm64_mmu_init();
+	z_arm64_mm_init(true);
 	z_arm64_interrupt_init();
 	z_cstart();
 

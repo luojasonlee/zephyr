@@ -30,6 +30,7 @@ LOG_MODULE_REGISTER(net_ethernet, CONFIG_NET_L2_ETHERNET_LOG_LEVEL);
 #include "net_private.h"
 #include "ipv6.h"
 #include "ipv4_autoconf_internal.h"
+#include "bridge.h"
 
 #define NET_BUF_TIMEOUT K_MSEC(100)
 
@@ -42,6 +43,25 @@ static const struct net_eth_addr broadcast_eth_addr = {
 const struct net_eth_addr *net_eth_broadcast_addr(void)
 {
 	return &broadcast_eth_addr;
+}
+
+void net_eth_ipv4_mcast_to_mac_addr(const struct in_addr *ipv4_addr,
+				    struct net_eth_addr *mac_addr)
+{
+	/* RFC 1112 6.4. Extensions to an Ethernet Local Network Module
+	 * "An IP host group address is mapped to an Ethernet multicast
+	 * address by placing the low-order 23-bits of the IP address into
+	 * the low-order 23 bits of the Ethernet multicast address
+	 * 01-00-5E-00-00-00 (hex)."
+	 */
+	mac_addr->addr[0] = 0x01;
+	mac_addr->addr[1] = 0x00;
+	mac_addr->addr[2] = 0x5e;
+	mac_addr->addr[3] = ipv4_addr->s4_addr[1];
+	mac_addr->addr[4] = ipv4_addr->s4_addr[2];
+	mac_addr->addr[5] = ipv4_addr->s4_addr[3];
+
+	mac_addr->addr[3] &= 0x7f;
 }
 
 void net_eth_ipv6_mcast_to_mac_addr(const struct in6_addr *ipv6_addr,
@@ -185,6 +205,19 @@ static enum net_verdict ethernet_recv(struct net_if *iface,
 	 */
 	if (hdr == NULL || pkt->buffer->len < hdr_len) {
 		goto drop;
+	}
+
+	if (IS_ENABLED(CONFIG_NET_ETHERNET_BRIDGE) &&
+	    net_eth_iface_is_bridged(ctx)) {
+		net_pkt_set_l2_bridged(pkt, true);
+		net_pkt_lladdr_src(pkt)->addr = hdr->src.addr;
+		net_pkt_lladdr_src(pkt)->len = sizeof(struct net_eth_addr);
+		net_pkt_lladdr_src(pkt)->type = NET_LINK_ETHERNET;
+		net_pkt_lladdr_dst(pkt)->addr = hdr->dst.addr;
+		net_pkt_lladdr_dst(pkt)->len = sizeof(struct net_eth_addr);
+		net_pkt_lladdr_dst(pkt)->type = NET_LINK_ETHERNET;
+		ethernet_update_rx_stats(iface, pkt, net_pkt_get_len(pkt));
+		return net_eth_bridge_input(ctx, pkt);
 	}
 
 	type = ntohs(hdr->type);
@@ -334,14 +367,7 @@ static bool ethernet_fill_in_dst_on_ipv4_mcast(struct net_pkt *pkt,
 	if (net_pkt_family(pkt) == AF_INET &&
 	    net_ipv4_is_addr_mcast(&NET_IPV4_HDR(pkt)->dst)) {
 		/* Multicast address */
-		dst->addr[0] = 0x01;
-		dst->addr[1] = 0x00;
-		dst->addr[2] = 0x5e;
-		dst->addr[3] = NET_IPV4_HDR(pkt)->dst.s4_addr[1];
-		dst->addr[4] = NET_IPV4_HDR(pkt)->dst.s4_addr[2];
-		dst->addr[5] = NET_IPV4_HDR(pkt)->dst.s4_addr[3];
-
-		dst->addr[3] &= 0x7f;
+		net_eth_ipv4_mcast_to_mac_addr(&NET_IPV4_HDR(pkt)->dst, dst);
 
 		return true;
 	}
@@ -578,7 +604,19 @@ static int ethernet_send(struct net_if *iface, struct net_pkt *pkt)
 		goto error;
 	}
 
-	if (IS_ENABLED(CONFIG_NET_IPV4) &&
+	if (IS_ENABLED(CONFIG_NET_ETHERNET_BRIDGE) &&
+	    net_pkt_is_l2_bridged(pkt)) {
+		net_pkt_cursor_init(pkt);
+		ret = net_l2_send(api->send, net_if_get_device(iface), iface, pkt);
+		if (ret != 0) {
+			eth_stats_update_errors_tx(iface);
+			goto error;
+		}
+		ethernet_update_tx_stats(iface, pkt);
+		ret = net_pkt_get_len(pkt);
+		net_pkt_unref(pkt);
+		return ret;
+	} else if (IS_ENABLED(CONFIG_NET_IPV4) &&
 	    net_pkt_family(pkt) == AF_INET) {
 		struct net_pkt *tmp;
 
